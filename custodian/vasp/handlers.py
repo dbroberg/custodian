@@ -219,10 +219,11 @@ class VaspErrorHandler(ErrorHandler):
                     {"dict": "INCAR",
                      "action": {"_set": {"ISYM": 0, "POTIM": potim}}})
             else:
-                s = vi["POSCAR"].structure
-                s.apply_strain(0.2)
-                actions.append({"dict": "POSCAR",
-                                "action": {"_set": {"structure": s.as_dict()}}})
+                # s = vi["POSCAR"].structure
+                #THIS IS BAD FOR DEFECTS...want to avoid
+                # s.apply_strain(0.2)
+                # actions.append({"dict": "POSCAR",
+                #                 "action": {"_set": {"structure": s.as_dict()}}})
 
             # Based on VASP forum's recommendation, you should delete the
             # CHGCAR and WAVECAR when dealing with this error.
@@ -312,11 +313,27 @@ class VaspErrorHandler(ErrorHandler):
                 actions.append({"file": "WAVECAR",
                                 "action": {"_file_delete": {'mode': "actual"}}})
         if "edddav" in self.errors:
+            amix = vi["INCAR"].get("AMIX", 0.4)
+            bmix = vi["INCAR"].get("BMIX", 1.0)
+            amin = vi["INCAR"].get("AMIN", 0.1)
             if vi["INCAR"].get("ICHARG", 0) < 10:
                 actions.append({"file": "CHGCAR",
                                 "action": {"_file_delete": {'mode': "actual"}}})
-            actions.append({"dict": "INCAR", "action":
-                            {"_set": {"ALGO": "All"}}})
+
+            if vi["INCAR"].get("ALGO", "Normal") not in ["Normal"]:
+                actions.append({"dict": "INCAR", "action": {"_set": {"ALGO": "Normal"}}})
+            elif amix > 0.1 and bmix > 0.01:
+                #try linear mixing
+                backup(VASP_BACKUP_FILES)
+                actions.append({"dict":"INCAR", "action": {"_set": {"AMIX": 0.1,"BMIX": 0.01, "ICHARG": 2}}})
+            elif bmix < 3.0 and amin > 0.01:
+                #Try increasing bmix
+                backup(VASP_BACKUP_FILES)
+                actions.append({"dict": "INCAR",
+                                "action": {"_set": {"AMIN": 0.01, "BMIX": 3.0,"ICHARG": 2}}})
+            else:
+                #this was original approach to fixing eddav...means mixing was too challenging?
+                actions.append({"dict": "INCAR", "action": {"_set": {"ALGO": "All"}}})
 
         if "grad_not_orth" in self.errors:
             if vi["INCAR"].get("ISMEAR", 1) < 0:
