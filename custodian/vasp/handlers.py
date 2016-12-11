@@ -219,7 +219,7 @@ class VaspErrorHandler(ErrorHandler):
                     {"dict": "INCAR",
                      "action": {"_set": {"ISYM": 0, "POTIM": potim}}})
             else:
-                # s = vi["POSCAR"].structure
+                s = vi["POSCAR"].structure
                 #THIS IS BAD FOR DEFECTS...want to avoid
                 # s.apply_strain(0.2)
                 # actions.append({"dict": "POSCAR",
