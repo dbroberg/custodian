@@ -369,3 +369,44 @@ class VaspJob(Job):
             settings_override=d["settings_override"],
             gamma_vasp_cmd=d["gamma_vasp_cmd"])
 
+
+
+class DumbWriteJob(Job):
+    def __init__(self, outputmessage, output_file, overwrite=False):
+        """
+        Simple job for printing status updates to an output_file (doesn't initially overwrite unless overwrite=True)
+        output file path must be a full length file path
+        """
+        self.message = outputmessage
+        self.output_file = output_file
+        self.overwrite = overwrite
+
+    def setup(self):
+        """
+        This method is run before the start of a job. Allows for some
+        pre-processing.
+        """
+        if self.overwrite and os.path.exists(output_file):
+            pat = os.path.split(self.output_file)[0]
+            stdout = os.path.join(pat,'std.out')
+            stderr = os.path.join(pat,'err.out')
+            with open(stdout, 'w') as f_std, \
+                open(stderr, "w", buffering=1) as f_err:
+                p = subprocess.Popen(["rm",str(self.output_file)], stdout=f_std, stderr=f_err)
+
+    def run(self):
+        """
+        This method perform the actual work for the job. If parallel error
+        checking (monitoring) is desired, this must return a Popen process.
+        """
+        with open(self.output_file,'a') as overview:
+            overview.write(message)
+
+    def postprocess(self):
+        """
+        This method is called at the end of a job, *after* error detection.
+        This allows post-processing, such as cleanup, analysis of results,
+        etc.
+        """
+        pass
+
