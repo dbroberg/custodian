@@ -28,7 +28,8 @@ __status__ = "Beta"
 __date__ = "2/4/13"
 
 
-VASP_INPUT_FILES = {"INCAR", "POSCAR", "POTCAR", "KPOINTS"}
+# VASP_INPUT_FILES = {"INCAR", "POSCAR", "POTCAR", "KPOINTS"}
+VASP_INPUT_FILES = {"INCAR"}
 
 VASP_OUTPUT_FILES = ['DOSCAR', 'INCAR', 'KPOINTS', 'POSCAR', 'PROCAR',
                      'vasprun.xml', 'CHGCAR', 'CHG', 'EIGENVAL', 'OSZICAR',
@@ -367,3 +368,4 @@ class VaspJob(Job):
             auto_npar=d['auto_npar'], auto_gamma=d['auto_gamma'],
             settings_override=d["settings_override"],
             gamma_vasp_cmd=d["gamma_vasp_cmd"])
+
