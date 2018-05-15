@@ -12,6 +12,8 @@ import tarfile
 import os
 from abc import ABCMeta, abstractmethod
 from itertools import islice
+import warnings
+from pprint import pformat
 
 import six
 
@@ -34,9 +36,6 @@ __version__ = "0.2"
 __maintainer__ = "Shyue Ping Ong"
 __email__ = "ongsp@ucsd.edu"
 __date__ = "Sep 17 2014"
-
-
-pjoin = os.path.join
 
 
 logger = logging.getLogger(__name__)
@@ -85,10 +84,12 @@ class Custodian(object):
     """
     LOG_FILE = "custodian.json"
 
-    def __init__(self, handlers, jobs, validators=None, max_errors=1,
-                 polling_time_step=10, monitor_freq=30,
+    def __init__(self, handlers, jobs, validators=None,
+                 max_errors_per_job=None,
+                 max_errors=1, polling_time_step=10, monitor_freq=30,
                  skip_over_errors=False, scratch_dir=None,
-                 gzipped_output=False, checkpoint=False, terminate_func=None):
+                 gzipped_output=False, checkpoint=False, terminate_func=None,
+                 terminate_on_nonzero_returncode=True):
         """
         Initializes a Custodian from a list of jobs and error handler.s
 
@@ -98,8 +99,11 @@ class Custodian(object):
             jobs ([Job]): Sequence of Jobs to be run. Note that this can be
                 any sequence or even a generator yielding jobs.
             validators([Validator]): Validators to ensure job success
-            max_errors (int): Maximum number of errors allowed before exiting.
-                Defaults to 1.
+            max_errors_per_job (int): Maximum number of errors per job allowed
+                before exiting. Defaults to None, which means it is set to be
+                equal to max_errors..
+            max_errors (int): Maximum number of total errors allowed before
+                exiting. Defaults to 1.
             polling_time_step (int): The length of time in seconds between
                 steps in which a job is checked for completion. Defaults to
                 10 secs.
@@ -135,8 +139,11 @@ class Custodian(object):
                 to False.
             terminate_func (callable): A function to be called to terminate a
                 running job. If None, the default is to call Popen.terminate.
+            terminate_on_nonzero_returncode (bool): If True, a non-zero return
+                code on any Job will result in a termination. Defaults to True.
         """
         self.max_errors = max_errors
+        self.max_errors_per_job = max_errors_per_job or max_errors
         self.jobs = jobs
         self.handlers = handlers
         self.validators = validators or []
@@ -153,15 +160,17 @@ class Custodian(object):
         else:
             self.restart = 0
             self.run_log = []
+        self.errors_current_job = 0
         self.total_errors = 0
         self.terminate_func = terminate_func
+        self.terminate_on_nonzero_returncode = terminate_on_nonzero_returncode
         self.finished = False
 
     @staticmethod
     def _load_checkpoint(cwd):
         restart = 0
         run_log = []
-        chkpts = glob(pjoin(cwd, "custodian.chk.*.tar.gz"))
+        chkpts = glob(os.path.join(cwd, "custodian.chk.*.tar.gz"))
         if chkpts:
             chkpt = sorted(chkpts, key=lambda c: int(c.split(".")[-3]))[0]
             restart = int(chkpt.split(".")[-3])
@@ -175,14 +184,14 @@ class Custodian(object):
 
     @staticmethod
     def _delete_checkpoints(cwd):
-        for f in glob(pjoin(cwd, "custodian.chk.*.tar.gz")):
+        for f in glob(os.path.join(cwd, "custodian.chk.*.tar.gz")):
             os.remove(f)
 
     @staticmethod
     def _save_checkpoint(cwd, index):
         try:
             Custodian._delete_checkpoints(cwd)
-            n = pjoin(cwd, "custodian.chk.{}.tar.gz".format(index))
+            n = os.path.join(cwd, "custodian.chk.{}.tar.gz".format(index))
             with tarfile.open(n,  mode="w:gz", compresslevel=3) as f:
                 f.add(cwd, arcname='.')
             logger.info("Checkpoint written to {}".format(n))
@@ -226,11 +235,8 @@ class Custodian(object):
                 ```
 
                 The `jobs` key is a list of jobs. Each job is
-                specified via "job": <explicit path>, and all parameters other
-                than
-                structure are specified via `params` which is a dict. `parents` is
-                a special parameter, which provides the *indices* of the parents
-                of that particular firework in the list.
+                specified via "job": <explicit path>, and all parameters are
+                specified via `params` which is a dict.
 
                 `common_params` specify a common set of parameters that are
                 passed to all jobs, e.g., vasp_cmd.
@@ -304,7 +310,8 @@ class Custodian(object):
                 start, temp_dir))
             v = sys.version.replace("\n", " ")
             logger.info("Custodian running on Python version {}".format(v))
-            logger.info("Hostname: {}, Cluster: {}".format(*get_execution_host_info()))
+            logger.info("Hostname: {}, Cluster: {}".format(
+                *get_execution_host_info()))
 
             try:
                 # skip jobs until the restart
@@ -341,28 +348,36 @@ class Custodian(object):
 
     def _run_job(self, job_n, job):
         """
+        Runs a single job.
+
         Args:
             job_n: job number (1 index)
             job: Custodian job
-        Runs a single job,
+
 
         Raises:
             CustodianError on unrecoverable errors, max errors, and jobs
             that fail validation
         """
         self.run_log.append({"job": job.as_dict(), "corrections": []})
+        self.errors_current_job = 0
         job.setup()
 
-        for attempt in range(1, self.max_errors - self.total_errors + 1):
+        attempt = 0
+        while (self.total_errors < self.max_errors and
+               self.errors_current_job < self.max_errors_per_job):
+            attempt += 1
             logger.info(
-                "Starting job no. {} ({}) attempt no. {}. Errors "
-                "thus far = {}.".format(
-                    job_n, job.name, attempt, self.total_errors))
+                "Starting job no. {} ({}) attempt no. {}. Total errors and "
+                "errors in job thus far = {}, {}.".format(
+                    job_n, job.name, attempt, self.total_errors,
+                    self.errors_current_job))
 
             p = job.run()
             # Check for errors using the error handlers and perform
             # corrections.
             has_error = False
+            zero_return_code = True
 
             # While the job is running, we use the handlers that are
             # monitors to monitor the job.
@@ -382,9 +397,12 @@ class Custodian(object):
                             time.sleep(self.polling_time_step)
                 else:
                     p.wait()
-                    if self.terminate_func is not None and self.terminate_func != p.terminate:
+                    if self.terminate_func is not None and \
+                            self.terminate_func != p.terminate:
                         self.terminate_func()
                         time.sleep(self.polling_time_step)
+
+                zero_return_code = p.returncode == 0
 
             logger.info("{}.run has completed. "
                         "Checking remaining handlers".format(job.name))
@@ -397,6 +415,10 @@ class Custodian(object):
             else:
                 has_error = self._do_check(self.handlers)
 
+            if has_error:
+                # This makes sure the job is killed cleanly for certain systems.
+                job.terminate()
+
             # If there are no errors detected, perform
             # postprocessing and exit.
             if not has_error:
@@ -404,6 +426,15 @@ class Custodian(object):
                     if v.check():
                         s = "Validation failed: {}".format(v)
                         raise CustodianError(s, True, v)
+                if not zero_return_code:
+                    if self.terminate_on_nonzero_returncode:
+                        s = "Job return code is %d. Terminating..." % \
+                            p.returncode
+                        logger.info(s)
+                        raise CustodianError(s, True)
+                    else:
+                        warnings.warn("subprocess returned a non-zero return "
+                                      "code. Check outputs carefully...")
                 job.postprocess()
                 return
 
@@ -418,8 +449,12 @@ class Custodian(object):
                     s = "Unrecoverable error for handler: %s" % x["handler"]
                     raise CustodianError(s, False, x["handler"])
 
-        logger.info("Max errors reached.")
-        raise CustodianError("MaxErrors", True)
+        if self.errors_current_job >= self.max_errors_per_job:
+            logger.info("Max errors per job reached.")
+            raise CustodianError("MaxErrorsPerJob", True)
+        else:
+            logger.info("Max errors reached.")
+            raise CustodianError("MaxErrors", True)
 
     def run_interrupted(self):
         """
@@ -433,10 +468,9 @@ class Custodian(object):
             CustodianError on unrecoverable errors, and jobs that fail
             validation
         """
-
+        start = datetime.datetime.now()
         try:
             cwd = os.getcwd()
-            start = datetime.datetime.now()
             v = sys.version.replace("\n", " ")
             logger.info("Custodian started in singleshot mode at {} in {}."
                         .format(start, cwd))
@@ -452,7 +486,8 @@ class Custodian(object):
                 job = self.jobs[job_n]
                 logger.info("Setting up job no. 1 ({}) ".format(job.name))
                 job.setup()
-                self.run_log.append({"job": job.as_dict(), "corrections": [], 'job_n': job_n})
+                self.run_log.append({"job": job.as_dict(), "corrections": [],
+                                     'job_n': job_n})
                 return len(self.jobs)
             else:
                 # Continuing after running calculation
@@ -462,10 +497,12 @@ class Custodian(object):
                 # If we had to fix errors from a previous run, insert clean log
                 # dict
                 if len(self.run_log[-1]['corrections']) > 0:
-                    logger.info("Reran {}.run due to fixable errors".format(job.name))
+                    logger.info("Reran {}.run due to fixable errors".format(
+                        job.name))
 
                 # check error handlers
-                logger.info("Checking error handlers for {}.run".format(job.name))
+                logger.info("Checking error handlers for {}.run".format(
+                    job.name))
                 if self._do_check(self.handlers):
                     logger.info("Failed validation based on error handlers")
                     # raise an error for an unrecoverable error
@@ -507,11 +544,12 @@ class Custodian(object):
         except CustodianError as ex:
             logger.error(ex.message)
             if ex.raises:
-                raise RuntimeError("{} errors reached: {}. Exited..."
-                                   .format(self.total_errors, ex))
+                raise RuntimeError(
+                    "{} errors / {} errors per job reached: {}. Exited..."
+                    .format(self.total_errors, self.errors_current_job, ex))
 
         finally:
-            #Log the corrections to a json file.
+            # Log the corrections to a json file.
             logger.info("Logging to {}...".format(Custodian.LOG_FILE))
             dumpfn(self.run_log, Custodian.LOG_FILE, cls=MontyEncoder,
                    indent=4)
@@ -538,7 +576,7 @@ class Custodian(object):
                         terminate_func = None
                     d = h.correct()
                     d["handler"] = h
-                    logger.error(str(d))
+                    logger.error("\n" + pformat(d, indent=2, width=-1))
                     corrections.append(d)
             except Exception:
                 if not self.skip_over_errors:
@@ -551,6 +589,7 @@ class Custodian(object):
                         {"errors": ["Bad handler %s " % h],
                          "actions": []})
         self.total_errors += len(corrections)
+        self.errors_current_job += len(corrections)
         self.run_log[-1]["corrections"].extend(corrections)
         return len(corrections) > 0
 
@@ -584,6 +623,9 @@ class Job(six.with_metaclass(ABCMeta, MSONable)):
         etc.
         """
         pass
+
+    def terminate(self):
+        return None
 
     @property
     def name(self):
