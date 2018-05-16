@@ -62,7 +62,7 @@ class VaspJob(Job):
                  stderr_file="std_err.txt", suffix="", final=True,
                  backup=True, auto_npar=True, auto_gamma=True,
                  settings_override=None, gamma_vasp_cmd=None,
-                 copy_magmom=False, auto_continue=False):
+                 copy_magmom=False, auto_continue=True):
         """
         This constructor is necessarily complex due to the need for
         flexibility. For standard kinds of runs, it's often better to use one
