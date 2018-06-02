@@ -40,7 +40,7 @@ VASP_INPUT_FILES = {"INCAR", "POSCAR", "POTCAR", "KPOINTS"}
 
 VASP_OUTPUT_FILES = ['DOSCAR', 'INCAR', 'KPOINTS', 'POSCAR', 'PROCAR',
                      'vasprun.xml', 'CHGCAR', 'CHG', 'EIGENVAL', 'OSZICAR',
-                     'WAVECAR', 'CONTCAR', 'IBZKPT', 'OUTCAR']
+                     'WAVECAR', 'CONTCAR', 'IBZKPT', 'OUTCAR', 'LOCPOT']
 
 VASP_NEB_INPUT_FILES = {'INCAR', 'POTCAR', 'KPOINTS'}
 
