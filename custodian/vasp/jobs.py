@@ -242,7 +242,7 @@ class VaspJob(Job):
 
     @classmethod
     def double_relaxation_run(cls, vasp_cmd, auto_npar=True, ediffg=-0.05,
-                              half_kpts_first_relax=False, auto_continue=False):
+                              half_kpts_first_relax=False, auto_continue=True):
         """
         Returns a list of two jobs corresponding to an AFLOW style double
         relaxation run.
@@ -299,7 +299,7 @@ class VaspJob(Job):
 
     @classmethod
     def metagga_opt_run(cls, vasp_cmd, auto_npar=True, ediffg=-0.05,
-                        half_kpts_first_relax=False, auto_continue=False):
+                        half_kpts_first_relax=False, auto_continue=True):
         """
         Returns a list of thres jobs to perform an optimization for any
         metaGGA functional. There is an initial calculation of the
@@ -319,11 +319,12 @@ class VaspJob(Job):
                                                 "NSW": 0}}}]
         jobs = [VaspJob(vasp_cmd, auto_npar=auto_npar,
                         final=False, suffix=".precondition",
+                        auto_continue=auto_continue,
                         settings_override=pre_opt_setings)]
 
         # Finish with regular double relaxation style run using SCAN
         jobs.extend(VaspJob.double_relaxation_run(vasp_cmd, auto_npar=auto_npar,
-                                                  ediffg=ediffg,
+                                                  ediffg=ediffg, auto_continue=auto_continue,
                                                   half_kpts_first_relax=half_kpts_first_relax))
 
         # Ensure the first relaxation doesn't overwrite the original inputs
