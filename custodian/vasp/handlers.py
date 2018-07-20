@@ -752,7 +752,7 @@ class MeshSymmetryErrorHandler(ErrorHandler):
 
 class UnconvergedErrorHandler(ErrorHandler):
     """
-    Check if a run is converged. Switches to ALGO = Normal.
+    Check if a run is converged.
     """
     is_monitor = False
 
@@ -776,15 +776,24 @@ class UnconvergedErrorHandler(ErrorHandler):
         return False
 
     def correct(self):
-        backup(VASP_BACKUP_FILES)
         v = Vasprun(self.output_filename)
-        actions = [{"file": "CONTCAR",
-                    "action": {"_file_copy": {"dest": "POSCAR"}}}]
+        actions = []
         if not v.converged_electronic:
-            # For SCAN try switching to CG for the electronic minimization
-            if "SCAN" in v.incar.get("METAGGA","").upper():
-                new_settings = {"ALGO": "All"}
+            # Ladder from VeryFast to Fast to Fast to All
+            # These progressively switches to more stable but more
+            # expensive algorithms
+            algo = v.incar.get("ALGO", "Normal")
+            if algo == "VeryFast":
+                actions.append({"dict": "INCAR",
+                                "action": {"_set": {"ALGO": "Fast"}}})
+            elif algo == "Fast":
+                actions.append({"dict": "INCAR",
+                                "action": {"_set": {"ALGO": "Normal"}}})
+            elif algo == "Normal":
+                actions.append({"dict": "INCAR",
+                                "action": {"_set": {"ALGO": "All"}}})
             else:
+                # Try mixing as last resort
                 new_settings = {"ISTART": 1,
                                 "ALGO": "Normal",
                                 "NELMDL": -6,
@@ -792,16 +801,26 @@ class UnconvergedErrorHandler(ErrorHandler):
                                 "AMIX_MAG": 0.8,
                                 "BMIX_MAG": 0.001}
 
-            if all([v.incar.get(k,"") == val for k,val in new_settings.items()]):
-                return {"errors": ["Unconverged"], "actions": None}
+                if not all([v.incar.get(k, "") == val for k, val in new_settings.items()]):
+                    actions.append({"dict": "INCAR",
+                                    "action": {"_set": new_settings}})
 
-            actions.append({"dict": "INCAR",
-                            "action": {"_set": new_settings}})
-        if not v.converged_ionic:
+        elif not v.converged_ionic:
+            # Just continue optimizing and let other handles fix ionic
+            # optimizer parameters
             actions.append({"dict": "INCAR",
                             "action": {"_set": {"IBRION": 1}}})
-        VaspModder().apply_actions(actions)
-        return {"errors": ["Unconverged"], "actions": actions}
+            actions.append({"file": "CONTCAR",
+                            "action": {"_file_copy": {"dest": "POSCAR"}}})
+
+        if actions:
+            vi = VaspInput.from_directory(".")
+            backup(VASP_BACKUP_FILES)
+            VaspModder(vi=vi).apply_actions(actions)
+            return {"errors": ["Unconverged"], "actions": actions}
+        else:
+            # Unfixable error. Just return None for actions.
+            return {"errors": ["Unconverged"], "actions": None}
 
 
 class MaxForceErrorHandler(ErrorHandler):
